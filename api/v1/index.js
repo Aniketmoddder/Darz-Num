@@ -1,100 +1,87 @@
 const cache = new Map();
-const CACHE_TTL = 60 * 1000;
-
-// helper: clean weird unicode + normalize keys
-function cleanRecord(item) {
-  return {
-    id: item["𝐈𝐃"] || item["ID"] || "",
-    mobile: item["𝐌𝐨𝐛𝐢𝐥𝐞"] || "",
-    name: item["𝐍𝐚𝐦𝐞"] || "",
-    father_name: item["𝐅𝐚𝐭𝐡𝐞𝐫'𝐬 𝐍𝐚𝐦𝐞"] || "",
-    address: (item["𝐀𝐝𝐝𝐫𝐞𝐬𝐬"] || "")
-      .replace(/!/g, ", ")
-      .replace(/\s+/g, " ")
-      .trim(),
-    alt_mobile: item["𝐀𝐥𝐭𝐞𝐫𝐧𝐚𝐭𝐞 𝐌𝐨𝐛𝐢𝐥𝐞"] || "",
-    circle: item["𝐂𝐢𝐫𝐜𝐥𝐞"] || "",
-    email: item["𝐄𝐦𝐚𝐢𝐥"] || ""
-  };
-}
+const CACHE_TTL = 60 * 1000; // 60s
 
 export default async function handler(req, res) {
   try {
     if (req.method !== "GET" && req.method !== "POST") {
-      return res.status(405).json({ status: "error", message: "Method not allowed" });
+      return res.status(405).json({ status: "error" });
     }
 
     const apiKey = req.query.api || req.body?.api;
     let num = req.query.num || req.body?.num;
 
-    if (apiKey !== "DARZ") {
-      return res.status(401).json({ status: "error", message: "Unauthorized" });
+    if (apiKey !== "DARZ" || !num) {
+      return res.status(401).json({ status: "error" });
     }
 
-    if (!num) {
-      return res.status(400).json({ status: "error", message: "Invalid request" });
-    }
-
-    num = String(num).replace(/\D/g, "");
+    // 🔥 FAST number normalize
+    num = ("" + num).replace(/\D/g, "");
     if (num.length > 10) num = num.slice(-10);
     if (num.length !== 10) {
-      return res.status(400).json({ status: "error", message: "Invalid number format" });
+      return res.status(400).json({ status: "error" });
     }
 
     const now = Date.now();
 
-    // cache
-    if (cache.has(num)) {
-      const cached = cache.get(num);
-      if (now - cached.time < CACHE_TTL) {
-        return res.status(200).json({
-          status: "success",
-          provider: "DARZ API",
-          owner: "Toji",
-          number: num,
-          results: cached.data,
-          cached: true,
-          copyright: "© DARZ API — Made by Toji",
-          timestamp: Math.floor(now / 1000)
-        });
-      }
-      cache.delete(num);
+    // ⚡ ULTRA FAST CACHE RETURN
+    const cached = cache.get(num);
+    if (cached && now - cached.t < CACHE_TTL) {
+      return res.json({
+        status: "success",
+        provider: "DARZ API",
+        owner: "Toji",
+        number: num,
+        results: cached.d,
+        cached: true,
+        copyright: "© DARZ API — Made by Toji",
+        timestamp: now / 1000 | 0
+      });
     }
 
-    const targetUrl = `https://source-code-api.vercel.app/?num=${num}`;
-    const response = await fetch(targetUrl, {
-      headers: {
-        "accept": "application/json,*/*",
-        "user-agent":
-          "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/137.0 Mobile Safari/537.36"
+    // 🎯 TARGET API
+    const r = await fetch(
+      `https://source-code-api.vercel.app/?num=${num}`,
+      {
+        headers: {
+          "accept": "application/json",
+          "user-agent": "Mozilla/5.0"
+        }
       }
-    });
+    );
 
-    const raw = await response.text();
-    const parsed = JSON.parse(raw);
+    const data = JSON.parse(await r.text());
+    const src = data.result || [];
 
-    // 🔥 REMOVE THEIR METADATA & CLEAN RESULTS
-    const cleanedResults = Array.isArray(parsed.result)
-      ? parsed.result.map(cleanRecord)
-      : [];
+    // ⚡ FAST CLEAN (NO EXTRA WORK)
+    const results = new Array(src.length);
+    for (let i = 0; i < src.length; i++) {
+      const x = src[i];
+      results[i] = {
+        aadhar: x["𝐈𝐃"] || "",
+        mobile: x["𝐌𝐨𝐛𝐢𝐥𝐞"] || "",
+        name: x["𝐍𝐚𝐦𝐞"] || "",
+        father_name: x["𝐅𝐚𝐭𝐡𝐞𝐫'𝐬 𝐍𝐚𝐦𝐞"] || "",
+        address: x["𝐀𝐝𝐝𝐫𝐞𝐬𝐬"] ? x["𝐀𝐝𝐝𝐫𝐞𝐬𝐬"].replace(/!/g, ", ") : "",
+        alt_mobile: x["𝐀𝐥𝐭𝐞𝐫𝐧𝐚𝐭𝐞 𝐌𝐨𝐛𝐢𝐥𝐞"] || "",
+        circle: x["𝐂𝐢𝐫𝐜𝐥𝐞"] || "",
+        email: x["𝐄𝐦𝐚𝐢𝐥"] || ""
+      };
+    }
 
-    cache.set(num, { data: cleanedResults, time: now });
+    cache.set(num, { d: results, t: now });
 
-    return res.status(200).json({
+    return res.json({
       status: "success",
       provider: "DARZ API",
       owner: "Toji",
       number: num,
-      results: cleanedResults,
+      results,
       cached: false,
       copyright: "© DARZ API — Made by Toji",
-      timestamp: Math.floor(now / 1000)
+      timestamp: now / 1000 | 0
     });
 
-  } catch (e) {
-    return res.status(503).json({
-      status: "error",
-      message: "Service unavailable"
-    });
+  } catch {
+    return res.status(503).json({ status: "error" });
   }
 }
